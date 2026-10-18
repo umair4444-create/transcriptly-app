@@ -15,8 +15,10 @@ import sys
 import tempfile
 import urllib.request
 import xml.etree.ElementTree as ET
+from html import escape as html_escape
 
 import streamlit as st
+import streamlit.components.v1 as components
 from youtube_transcript_api import YouTubeTranscriptApi
 from youtube_transcript_api._errors import (
     NoTranscriptFound,
@@ -460,6 +462,60 @@ def friendly_error(e: Exception) -> str:
 
 
 # ------------------------------------------------------------------ UI
+def transcript_div_html(text: str) -> str:
+    """Transcript in a self-styled box: guaranteed word-wrap (portrait
+    reading, no sideways scrolling) via inline styles."""
+    escaped = html_escape(text)
+    return (
+        '<div id="transcript-box" style="'
+        "background: rgba(127,127,127,.10);"
+        "border: 1px solid rgba(127,127,127,.30);"
+        "border-radius: 10px;"
+        "padding: 14px 16px;"
+        "font-family: ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;"
+        "font-size: 14px;"
+        "line-height: 1.75;"
+        "white-space: pre-wrap;"
+        "overflow-wrap: break-word;"
+        "word-break: break-word;"
+        "max-height: 55vh;"
+        'overflow-y: auto;">'
+        f"{escaped}</div>"
+    )
+
+
+def copy_button_html(text: str) -> str:
+    """Big one-tap copy button. Rendered via components.html so the
+    JavaScript actually runs (st.markdown strips event handlers)."""
+    payload = json.dumps(text)
+    return (
+        '<button id="cpbtn" style="display:block;width:100%;padding:13px;'
+        "border:none;border-radius:10px;background:#ff2b2b;color:#fff;"
+        'font-size:16px;font-weight:700;cursor:pointer;">'
+        "\U0001F4CB Copy Transcript</button>"
+        "<script>"
+        f"var TEXT = {payload};"
+        "document.getElementById('cpbtn').addEventListener('click', function() {"
+        "  var b = this;"
+        "  function ok() { b.textContent = '\u2713 Copied!';"
+        "    setTimeout(function(){ b.textContent = '\U0001F4CB Copy Transcript'; }, 2000); }"
+        "  function legacy() {"
+        "    var ta = document.createElement('textarea');"
+        "    ta.value = TEXT; ta.setAttribute('readonly','');"
+        "    ta.style.position='fixed'; ta.style.top='0'; ta.style.opacity='0';"
+        "    document.body.appendChild(ta); ta.select();"
+        "    try { document.execCommand('copy'); ok(); }"
+        "    catch(e) { b.textContent = '\u26A0 Long-press to copy'; }"
+        "    document.body.removeChild(ta);"
+        "  }"
+        "  if (navigator.clipboard && navigator.clipboard.writeText) {"
+        "    navigator.clipboard.writeText(TEXT).then(ok, function(){ legacy(); });"
+        "  } else { legacy(); }"
+        "});"
+        "</script>"
+    )
+
+
 st.set_page_config(page_title="Transcriptly", page_icon="📝", layout="centered")
 
 st.markdown("""
@@ -541,14 +597,11 @@ if meta:
         except Exception as e:
             st.error(friendly_error(e))
         if t is not None:
-            st.code(t["text"], language=None)
-            c1, c2 = st.columns(2)
-            with c1:
-                st.download_button("⬇ Download .txt", t["text"],
-                                   file_name="transcript.txt",
-                                   use_container_width=True)
-            with c2:
-                st.caption("Tip: hover the transcript box and use its copy button")
+            st.markdown(transcript_div_html(t["text"]), unsafe_allow_html=True)
+            components.html(copy_button_html(t["text"]), height=70)
+            st.download_button("⬇ Download .txt", t["text"],
+                               file_name="transcript.txt",
+                               use_container_width=True)
             st.caption(f"{len(t['segments'])} caption lines · {t['language']}")
 
 st.markdown("---")
