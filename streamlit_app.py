@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 import xml.etree.ElementTree as ET
 from html import escape as html_escape
@@ -26,13 +27,30 @@ from youtube_transcript_api._errors import (
     VideoUnavailable,
 )
 
-YTDLP_TIMEOUT = 90
+YTDLP_TIMEOUT = 60
 HTTP_TIMEOUT = 15
 
 # Bump this whenever the fetch/detect logic changes. Streamlit's
 # st.cache_data lives in server memory and can survive a code redeploy,
 # so without a version in the key users would keep getting stale results.
-CACHE_VERSION = "v4"
+CACHE_VERSION = "v5"
+
+
+def _retry(fn, tries=3, delay=2.0, skip=()):
+    """Retry a fetch on transient failures (YouTube's blocking is often
+    per-request flaky). Exceptions in `skip` (definitive answers like
+    'video has no captions') are never retried."""
+    last_exc = None
+    for attempt in range(tries):
+        try:
+            return fn()
+        except skip:
+            raise
+        except Exception as e:
+            last_exc = e
+            if attempt < tries - 1:
+                time.sleep(delay)
+    raise last_exc
 
 VIDEO_ID_RE = re.compile(
     r"(?:youtube\.com/(?:watch\?.*v=|shorts/|embed/|live/|v/)|youtu\.be/)([A-Za-z0-9_-]{11})"
@@ -400,21 +418,23 @@ def tier3_transcript(video_id: str, lang: str | None) -> dict:
 # ---------------------------------------------------------------- orchestration
 @st.cache_data(ttl=3600, show_spinner=False)
 def cached_languages(version: str, video_id: str) -> tuple[str, list[dict]]:
-    # Tier 1
+    # Tier 1 (fast library; YouTube's blocking is per-request flaky, retried)
     try:
-        return tier1_languages(video_id)
+        return _retry(lambda: tier1_languages(video_id), tries=2,
+                      skip=(NoCaptions, VideoGone))
     except (NoCaptions, VideoGone):
         raise
     except Exception:
         pass
-    # Tier 2
+    # Tier 2 (yt-dlp workhorse; most likely to succeed, gets the most chances)
     try:
-        return tier2_languages(video_id)
+        return _retry(lambda: tier2_languages(video_id), tries=3, delay=3.0,
+                      skip=(NoCaptions, VideoGone))
     except (NoCaptions, VideoGone):
         raise
     except Exception:
         pass
-    # Tier 3
+    # Tier 3 (Piped proxies; their own instance loop is the retry)
     try:
         return tier3_languages(video_id)
     except (NoCaptions, VideoGone):
@@ -428,14 +448,16 @@ def cached_transcript(version: str, video_id: str, lang: str | None,
                       auto: bool) -> dict:
     # Tier 1
     try:
-        return tier1_transcript(video_id, lang)
+        return _retry(lambda: tier1_transcript(video_id, lang), tries=2,
+                      skip=(NoCaptions, VideoGone))
     except (NoCaptions, VideoGone):
         raise
     except Exception:
         pass
     # Tier 2
     try:
-        return tier2_transcript(video_id, lang, auto)
+        return _retry(lambda: tier2_transcript(video_id, lang, auto), tries=3,
+                      delay=3.0, skip=(NoCaptions, VideoGone))
     except (NoCaptions, VideoGone):
         raise
     except Exception:
@@ -544,23 +566,49 @@ url = st.text_input("YouTube link", placeholder="https://www.youtube.com/watch?v
 
 if "meta" not in st.session_state:
     st.session_state.meta = None
+if "retry_pending" not in st.session_state:
+    st.session_state.retry_pending = None
 
-if st.button("Generate transcript", type="primary", use_container_width=True):
-    if not extract_video_id(url):
+
+def do_generate(target_url):
+    """Run the caption-listing fetch. On a Blocked error the URL is stashed
+    in retry_pending so the UI can offer a one-tap 'Try again'."""
+    vid = extract_video_id(target_url)
+    if not vid:
         st.error("Please paste a valid YouTube link.")
         st.session_state.meta = None
-    else:
-        with st.spinner("Reading video info…"):
-            try:
-                title, langs = cached_languages(CACHE_VERSION,
-                                                extract_video_id(url))
-            except Exception as e:
-                st.error(friendly_error(e))
-                st.session_state.meta = None
-            else:
-                st.session_state.meta = {"url": url, "title": title,
-                                         "langs": langs,
-                                         "detected": pick_detected(langs)}
+        return
+    with st.spinner("Reading video info…"):
+        try:
+            title, langs = cached_languages(CACHE_VERSION, vid)
+        except Blocked:
+            st.session_state.meta = None
+            st.session_state.retry_pending = target_url
+            return
+        except Exception as e:
+            st.error(friendly_error(e))
+            st.session_state.meta = None
+            return
+        detected = pick_detected(langs)
+        if not detected:
+            st.error(friendly_error(NoCaptions()))
+            st.session_state.meta = None
+            return
+        st.session_state.meta = {"url": target_url, "title": title,
+                                 "langs": langs, "detected": detected}
+        st.session_state.retry_pending = None
+
+
+if st.button("Generate transcript", type="primary", use_container_width=True):
+    do_generate(url)
+
+if st.session_state.retry_pending:
+    st.error("⏳ YouTube is temporarily blocking our server. "
+             "This usually clears in a minute or two.")
+    if st.button("🔄 Try again"):
+        retry_url = st.session_state.retry_pending
+        st.session_state.retry_pending = None
+        do_generate(retry_url)
 
 meta = st.session_state.meta
 if meta:
@@ -596,6 +644,11 @@ if meta:
                             "showing English (auto-generated) instead.")
             if t is None:
                 st.error(friendly_error(NoCaptions()))
+        except Blocked:
+            st.error("⏳ YouTube is temporarily blocking our server. "
+                     "This usually clears in a minute or two.")
+            if st.button("🔄 Try again", key="retry_transcript"):
+                st.rerun()
         except Exception as e:
             st.error(friendly_error(e))
         if t is not None:
