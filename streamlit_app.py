@@ -27,6 +27,11 @@ from youtube_transcript_api._errors import (
 YTDLP_TIMEOUT = 90
 HTTP_TIMEOUT = 15
 
+# Bump this whenever the fetch/detect logic changes. Streamlit's
+# st.cache_data lives in server memory and can survive a code redeploy,
+# so without a version in the key users would keep getting stale results.
+CACHE_VERSION = "v4"
+
 VIDEO_ID_RE = re.compile(
     r"(?:youtube\.com/(?:watch\?.*v=|shorts/|embed/|live/|v/)|youtu\.be/)([A-Za-z0-9_-]{11})"
 )
@@ -392,8 +397,7 @@ def tier3_transcript(video_id: str, lang: str | None) -> dict:
 
 # ---------------------------------------------------------------- orchestration
 @st.cache_data(ttl=3600, show_spinner=False)
-def cached_languages(url: str) -> tuple[str, list[dict]]:
-    video_id = extract_video_id(url)
+def cached_languages(version: str, video_id: str) -> tuple[str, list[dict]]:
     # Tier 1
     try:
         return tier1_languages(video_id)
@@ -418,8 +422,8 @@ def cached_languages(url: str) -> tuple[str, list[dict]]:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def cached_transcript(url: str, lang: str | None, auto: bool) -> dict:
-    video_id = extract_video_id(url)
+def cached_transcript(version: str, video_id: str, lang: str | None,
+                      auto: bool) -> dict:
     # Tier 1
     try:
         return tier1_transcript(video_id, lang)
@@ -467,6 +471,8 @@ st.markdown("""
   .stButton>button {border-radius: 10px; font-weight: 600;}
   .badge {display:inline-block; font-size:12px; font-weight:600; color:#4338ca;
           background:#eef2ff; padding:4px 12px; border-radius:20px; margin:6px 0 2px;}
+  /* transcript wraps instead of scrolling sideways (portrait reading) */
+  pre {white-space: pre-wrap !important; overflow-wrap: break-word !important;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -488,7 +494,8 @@ if st.button("Generate transcript", type="primary", use_container_width=True):
     else:
         with st.spinner("Reading video info…"):
             try:
-                title, langs = cached_languages(url)
+                title, langs = cached_languages(CACHE_VERSION,
+                                                extract_video_id(url))
             except Exception as e:
                 st.error(friendly_error(e))
                 st.session_state.meta = None
@@ -513,14 +520,17 @@ if meta:
     with st.spinner("Generating transcript…"):
         t = None
         try:
-            t = cached_transcript(meta["url"], lang["code"], lang["auto"])
+            t = cached_transcript(CACHE_VERSION, extract_video_id(meta["url"]),
+                                lang["code"], lang["auto"])
         except NoCaptions:
             # The chosen language had no downloadable captions — fall back
             # to English auto-captions when available.
             fb = english_auto_fallback(meta["langs"], lang["code"])
             if fb is not None:
                 try:
-                    t = cached_transcript(meta["url"], fb["code"], True)
+                    t = cached_transcript(CACHE_VERSION,
+                                        extract_video_id(meta["url"]),
+                                        fb["code"], True)
                 except Exception:
                     t = None
                 if t is not None:
