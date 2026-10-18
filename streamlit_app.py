@@ -222,7 +222,23 @@ def pick_detected(langs: list[dict]) -> dict | None:
     manual = [l for l in langs if not l["auto"]]
     if manual:
         return manual[0]
-    return langs[0] if langs else None
+    auto = [l for l in langs if l["auto"]]
+    # Prefer English auto-captions when available (most reliable track;
+    # YouTube often mislabels the ASR language on Shorts)
+    for l in auto:
+        if l["code"].lower().startswith("en"):
+            return l
+    return auto[0] if auto else None
+
+
+def english_auto_fallback(langs: list[dict], exclude_code: str) -> dict | None:
+    """Return an English auto-caption track different from exclude_code, if any."""
+    return next(
+        (l for l in langs
+         if l["auto"] and l["code"].lower().startswith("en")
+         and l["code"] != exclude_code),
+        None,
+    )
 
 
 def match_lang(langs: list[dict], code: str | None) -> dict | None:
@@ -495,11 +511,26 @@ if meta:
     lang = meta["langs"][labels.index(sel)]
 
     with st.spinner("Generating transcript…"):
+        t = None
         try:
             t = cached_transcript(meta["url"], lang["code"], lang["auto"])
+        except NoCaptions:
+            # The chosen language had no downloadable captions — fall back
+            # to English auto-captions when available.
+            fb = english_auto_fallback(meta["langs"], lang["code"])
+            if fb is not None:
+                try:
+                    t = cached_transcript(meta["url"], fb["code"], True)
+                except Exception:
+                    t = None
+                if t is not None:
+                    st.info("The selected language had no downloadable captions — "
+                            "showing English (auto-generated) instead.")
+            if t is None:
+                st.error(friendly_error(NoCaptions()))
         except Exception as e:
             st.error(friendly_error(e))
-        else:
+        if t is not None:
             st.code(t["text"], language=None)
             c1, c2 = st.columns(2)
             with c1:
