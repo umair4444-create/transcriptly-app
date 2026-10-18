@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- rounded indigo background -->
+    <path
+        android:fillColor="#4F46E5"
+        android:pathData="M24,0 h60 a24,24 0 0 1 24,24 v60 a24,24 0 0 1 -24,24 h-60 a24,24 0 0 1 -24,-24 v-60 a24,24 0 0 1 24,-24 z" />
+    <!-- white "T" -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,32 h40 v11 h-40 z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48.5,43 h11 v33 h-11 z" />
+    <!-- transcript lines under the T -->
+    <path
+        android:fillColor="#C7D2FE"
+        android:pathData="M38,82 h32 v5 h-32 z" />
+    <path
+        android:fillColor="#C7D2FE"
+        android:pathData="M44,90 h20 v5 h-20 z" />
+</vector>
