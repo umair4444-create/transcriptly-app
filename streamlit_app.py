@@ -534,6 +534,8 @@ st.markdown("""
 
 st.markdown("# Get any YouTube video's transcript <span style='color:#4f46e5'>in seconds</span>",
             unsafe_allow_html=True)
+st.markdown("<p style='color:#9ca3af; font-size:14px; margin-top:-12px;'>by <b>M Umair</b></p>",
+            unsafe_allow_html=True)
 st.write("Paste a video link below. We detect the language spoken in the video "
          "and generate the transcript instantly — free, no sign-up.")
 
@@ -609,4 +611,4 @@ c1, c2, c3 = st.columns(3)
 c1.markdown("**⚡ Instant**\n\nTranscripts in seconds.")
 c2.markdown("**🌍 Auto language**\n\nDetected from the video itself.")
 c3.markdown("**📋 One-click copy**\n\nCopy or download as .txt.")
-st.caption("Made with ♥ by Transcriptly · Free forever · Works with captioned YouTube videos")
+st.caption("Made with ♥ by M Umair · Free forever · Works with captioned YouTube videos")
